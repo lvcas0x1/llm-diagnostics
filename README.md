@@ -215,7 +215,35 @@ open build/LLMUsageBar.app
 ```
 
 To start at login: System Settings > General > Login Items > Open at Login > `+` >
-`build/LLMUsageBar.app`. The build is for the Mac's own architecture; build on each Mac.
+`build/LLMUsageBar.app`. The build is for the Mac's own architecture; release DMGs are Apple Silicon only.
+
+## Release
+
+`.github/workflows/release.yml` runs on every push to `main`, except pushes that change only
+Markdown files (`paths-ignore: '**.md'`), and manually from the Actions tab:
+
+1. On a GitHub-hosted `macos-26` runner: runs `scripts/test.sh`.
+2. Builds the app for Apple Silicon (arm64, macOS 14 or later) with `scripts/build-app.sh`.
+   Version from `scripts/next-version.sh`: `Resources/Info.plist`'s major.minor, with the patch one
+   above the highest released `v<major>.<minor>.<patch>` (never below Info.plist's patch). The first
+   release is Info.plist's version, `0.0.1`; then `0.0.2`, `0.0.3`, … To start `0.1.x`, set
+   Info.plist to `0.1.0`.
+3. Packages it with `scripts/make-dmg.sh` as `LLMUsageBar-<version>.dmg` (app + Applications link):
+   `diskutil image create from`, compressed read-only (ULFO), APFS volume. `hdiutil` is not used;
+   it prints a deprecation warning on macOS 27.
+4. Publishes a GitHub release `v<version>` with the DMG attached, using the preinstalled `gh` CLI
+   and the workflow's `GITHUB_TOKEN` (`contents: write` for this job only).
+
+The app is ad-hoc signed and not notarized (that needs an Apple Developer ID). On first launch,
+macOS blocks it: open System Settings > Privacy & Security and click "Open Anyway"
+(https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
+
+Local equivalent:
+
+```sh
+APP_VERSION=0.1.0 ./scripts/build-app.sh
+./scripts/make-dmg.sh 0.1.0      # -> build/LLMUsageBar-0.1.0.dmg
+```
 
 ## Tests
 
