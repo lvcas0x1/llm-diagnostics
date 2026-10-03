@@ -219,8 +219,11 @@ To start at login: System Settings > General > Login Items > Open at Login > `+`
 
 ## Release
 
-`.github/workflows/release.yml` runs on every push to `main`, except pushes that change only
-Markdown files (`paths-ignore: '**.md'`), and manually from the Actions tab:
+`.github/workflows/release.yml` runs on a push to `main` only when the push changes at least one
+file that affects the app or its packaging: `Sources/**`, `Resources/**`, `Package.swift`,
+`Package.resolved`, `scripts/build-app.sh`, `scripts/make-dmg.sh`, `scripts/next-version.sh`, or the
+workflow itself. Pushes that change only the README, tests, test scripts, or `.gitignore` do not
+build. It can also be run manually from the Actions tab:
 
 1. On a GitHub-hosted `macos-26` runner: runs `scripts/test.sh`.
 2. Builds the app for Apple Silicon (arm64, macOS 14 or later) with `scripts/build-app.sh`.

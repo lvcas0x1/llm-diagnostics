@@ -1,13 +1,22 @@
-# On every push to main that changes more than Markdown files: run the tests, build the app for
+# On a push to main that changes the app or how it is packaged: run the tests, build the app for
 # Apple Silicon, package it as a DMG, and publish it as a GitHub release tagged v<version>.
 name: Release
 
 on:
   push:
     branches: [main]
-    # Skipped only when every changed file is Markdown.
-    paths-ignore:
-      - '**.md'
+    # Runs only when at least one of these changed: the app's code and bundle files, the build
+    # and packaging scripts, or this workflow. Changes to README, tests, and test scripts alone
+    # do not produce a release.
+    paths:
+      - 'Sources/**'
+      - 'Resources/**'
+      - 'Package.swift'
+      - 'Package.resolved'
+      - 'scripts/build-app.sh'
+      - 'scripts/make-dmg.sh'
+      - 'scripts/next-version.sh'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
 
 permissions:
