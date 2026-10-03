@@ -324,6 +324,8 @@ build. It can also be run manually from the Actions tab:
    it prints a deprecation warning on macOS 27.
 4. Publishes a GitHub release `v<version>` with the DMG attached, using the preinstalled `gh` CLI
    and the workflow's `GITHUB_TOKEN` (`contents: write` for this job only).
+5. Keeps the 3 newest releases (by creation time): older releases are deleted together with their
+   tags (`gh release delete --cleanup-tag`).
 
 The app is ad-hoc signed and not notarized (that needs an Apple Developer ID). On first launch,
 macOS blocks it: open System Settings > Privacy & Security and click "Open Anyway"

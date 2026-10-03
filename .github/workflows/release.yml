@@ -72,3 +72,14 @@ jobs:
 
           The app is ad-hoc signed and not notarized. After copying it to Applications, open it once,
           then allow it in System Settings > Privacy & Security > Open Anyway."
+
+      # Keep the 3 newest releases; delete older ones together with their tags.
+      - name: Prune old releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 1000 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[3:][] | .tagName' |
+          while read -r tag; do
+            gh release delete "$tag" --cleanup-tag --yes
+          done
