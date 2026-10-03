@@ -71,6 +71,34 @@ fi
 
 VS Code sessions appear in the Copilot section as `vscode`.
 
+### Dev containers
+
+For Claude Code and Copilot CLI running inside a dev container, add to
+`.devcontainer/devcontainer.json` (merge into an existing `containerEnv`), then rebuild the container:
+
+```json
+"containerEnv": {
+  "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+  "OTEL_METRICS_EXPORTER": "otlp",
+  "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL": "http/json",
+  "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://host.docker.internal:4318/v1/metrics",
+  "OTEL_METRIC_EXPORT_INTERVAL": "60000",
+  "OTEL_EXPORTER_OTLP_ENDPOINT": "http://host.docker.internal:4318",
+  "OTEL_RESOURCE_ATTRIBUTES": "cc.label=${localWorkspaceFolderBasename}-devcontainer"
+}
+```
+
+With Podman, use `host.containers.internal` instead of `host.docker.internal`. Sessions appear as
+`<folder>-devcontainer`. Codex inside a dev container is not collected.
+
+Check from inside the container that the app can be reached (`{}` means it works):
+
+```sh
+curl -s -X POST -H 'Content-Type: application/json' -d '{}' http://host.docker.internal:4318/v1/metrics
+```
+
+The app listens on `127.0.0.1` only; whether a container can reach it has not been verified.
+
 ## Good to know
 
 - Usage sent by Claude Code or Copilot while the app is not running is not counted. Codex usage is

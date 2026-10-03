@@ -150,10 +150,14 @@ Add to `.devcontainer/devcontainer.json` and rebuild the container. With Podman 
   "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL": "http/json",
   "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://host.docker.internal:4318/v1/metrics",
   "OTEL_METRIC_EXPORT_INTERVAL": "60000",
+  "OTEL_EXPORTER_OTLP_ENDPOINT": "http://host.docker.internal:4318",
   "OTEL_RESOURCE_ATTRIBUTES": "cc.label=${localWorkspaceFolderBasename}-devcontainer"
 }
 ```
 
+- `OTEL_EXPORTER_OTLP_ENDPOINT` also covers Copilot CLI run inside the container (traces).
+- Reachability check from inside the container; `{}` means the app answered:
+  `curl -s -X POST -H 'Content-Type: application/json' -d '{}' http://host.docker.internal:4318/v1/metrics`
 - `host.docker.internal`: https://docs.docker.com/desktop/features/networking/networking-how-tos/
 - `host.containers.internal`: https://docs.podman.io/en/latest/markdown/podman-run.1.html
 - Not verified: whether a container can reach the app, which listens on `127.0.0.1` only.
