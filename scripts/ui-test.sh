@@ -62,6 +62,8 @@ sleep 3
 for m in claude-opus-5-5 claude-haiku-4-5; do
     curl -s -o /dev/null -X POST -H 'Content-Type: application/json' "http://127.0.0.1:$PORT/v1/metrics" -d "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[{\"name\":\"claude_code.token.usage\",\"sum\":{\"aggregationTemporality\":1,\"dataPoints\":[{\"attributes\":[{\"key\":\"session.id\",\"value\":{\"stringValue\":\"ui-1\"}},{\"key\":\"model\",\"value\":{\"stringValue\":\"$m\"}},{\"key\":\"type\",\"value\":{\"stringValue\":\"input\"}}],\"asDouble\":1000}]}}]}]}]}"
 done
+# The longer label can make macOS collapse the menu bar items; leave time to expand them first.
+sleep 2
 item=$(osascript -e 'tell application "System Events" to tell process "LLMUsageBar" to get position of menu bar item 1 of menu bar 2' 2>/dev/null | tr -d ' ')
 [[ -z "$item" ]] && { echo "Cannot read the menu bar item: grant Accessibility to this terminal app."; exit 1; }
 ITEM_X=$(( ${item%,*} + 40 ))

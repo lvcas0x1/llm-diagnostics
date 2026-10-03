@@ -555,6 +555,55 @@ struct IntegrationTests {
         server.stop()
     }
 
+    /// Sends raw bytes in one write and returns how many responses arrive within `timeout`.
+    static func responseCount(_ port: UInt16, _ bytes: String, timeout: Duration = .seconds(2)) async -> Int {
+        let received = Received()
+        let conn = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+        @Sendable func read() {
+            conn.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, isComplete, error in
+                if let data { received.append(data) }
+                if !isComplete && error == nil { read() }
+            }
+        }
+        conn.stateUpdateHandler = { state in
+            if case .ready = state {
+                conn.send(content: Data(bytes.utf8), completion: .contentProcessed { _ in })
+                read()
+            }
+        }
+        conn.start(queue: .global())
+        try? await Task.sleep(for: timeout)
+        conn.cancel()
+        return received.text.components(separatedBy: "HTTP/1.1 ").count - 1
+    }
+
+    final class Received: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        var text: String { lock.withLock { String(decoding: data, as: UTF8.self) } }
+        func append(_ d: Data) { lock.withLock { data.append(d) } }
+    }
+
+    /// Reported: two requests sent together on one connection (HTTP pipelining) got only one
+    /// response; the second waited for more data to arrive.
+    @Test func serverAnswersPipelinedRequests() async throws {
+        let inbox = Inbox()
+        let server = OTLPServer(onPoints: { inbox.add($0) }, onSpans: { inbox.add($0) }, onState: { inbox.add($0) })
+        let port: UInt16 = 47_320
+        server.start(port: port, metrics: true, traces: true)
+        await Self.waitUntil { inbox.states.contains(.listening(port: port)) }
+        func request(_ session: String) -> String {
+            let body = String(decoding: metricsBody(name: "claude_code.token.usage", cumulative: false,
+                                                    points: [(["session.id": session, "type": "input"], 7, "1")]), as: UTF8.self)
+            return "POST /v1/metrics HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\n\r\n" + body
+        }
+        #expect(await Self.responseCount(port, request("a") + request("b")) == 2)
+        #expect(await Self.responseCount(port, request("c") + request("d") + request("e")) == 3)
+        await Self.waitUntil { inbox.points.count == 5 }
+        #expect(Set(inbox.points.map(\.sessionId)) == ["a", "b", "c", "d", "e"])
+        server.stop()
+    }
+
     @Test func serverRoutesPayloadsByProvider() async throws {
         let inbox = Inbox()
         let server = OTLPServer(onPoints: { inbox.add($0) }, onSpans: { inbox.add($0) }, onState: { inbox.add($0) })

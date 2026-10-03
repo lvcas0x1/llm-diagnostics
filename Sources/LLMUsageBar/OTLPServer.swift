@@ -134,15 +134,21 @@ final class OTLPServer: @unchecked Sendable {
                 conn.cancel()
                 return
             }
-            switch HTTPRequest.parse(buf) {
-            case .complete(let req, let consumed):
-                self.handle(req, on: conn)
-                let rest = Data(buf.dropFirst(consumed))
-                if isComplete { conn.cancel() } else { self.receive(conn, buffer: rest) }
-            case .incomplete:
-                if isComplete { conn.cancel() } else { self.receive(conn, buffer: buf) }
-            case .invalid:
-                self.respond(conn, status: "400 Bad Request", close: true)
+            // Handle every complete request already received (pipelined requests arrive together)
+            // before waiting for more data.
+            while true {
+                switch HTTPRequest.parse(buf) {
+                case .complete(let req, let consumed):
+                    self.handle(req, on: conn)
+                    buf = Data(buf.dropFirst(consumed))
+                    if !buf.isEmpty { continue }
+                    if isComplete { conn.cancel() } else { self.receive(conn, buffer: buf) }
+                case .incomplete:
+                    if isComplete { conn.cancel() } else { self.receive(conn, buffer: buf) }
+                case .invalid:
+                    self.respond(conn, status: "400 Bad Request", close: true)
+                }
+                return
             }
         }
     }
