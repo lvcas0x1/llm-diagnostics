@@ -339,8 +339,9 @@ struct FormatTests {
     }
 
     @Test func tokens() {
-        #expect(Format.kTokens(0) == "0k")
-        #expect(Format.kTokens(1_499) == "1k")
+        #expect(Format.tokens(0) == "0")
+        #expect(Format.tokens(950) == "950")
+        #expect(Format.tokens(80_900_000) == "80.9M")
         #expect(Format.tokens(1_500) == "1.5K")
         #expect(Format.tokens(2_500_000) == "2.5M")
     }

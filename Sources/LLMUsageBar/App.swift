@@ -109,7 +109,7 @@ struct MenuBarLabel: View {
     @ObservedObject var copilot: CopilotStore
 
     var body: some View {
-        Text("\(Format.kTokens(model.totalTokens)) / \(Format.usd(model.totalCost))")
+        Text("\(Format.tokens(model.totalTokens)) / \(Format.usd(model.totalCost))")
             .monospacedDigit()
     }
 }

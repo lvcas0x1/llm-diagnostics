@@ -292,11 +292,7 @@ enum Format {
         return v >= 100 ? String(format: "$%.0f", v) : String(format: "$%.2f", v)
     }
 
-    /// Whole thousands with a lowercase k, e.g. "0k", "23k", "1,234k".
-    static func kTokens(_ v: Double) -> String {
-        (v / 1000).formatted(.number.precision(.fractionLength(0))) + "k"
-    }
-
+    /// Token count with a unit, the same everywhere: "0", "950", "1.5K", "80.9M", "1.2B".
     static func tokens(_ v: Double) -> String {
         switch v {
         case 1_000_000_000...: String(format: "%.1fB", v / 1e9)

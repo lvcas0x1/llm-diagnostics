@@ -3,7 +3,7 @@
 A macOS menu bar app that shows how many tokens your AI coding tools use and what it would cost at
 API prices: Claude Code, Codex CLI, GitHub Copilot CLI, and Copilot Chat in VS Code.
 
-- Menu bar: total tokens and cost, for example `1,234k / $5.67`.
+- Menu bar: total tokens and cost, for example `80.9M / $29.25`.
 - Click it to see each session, and click a session to see tokens per model.
 - Costs are estimates at API list prices, not bills. Subscription usage is shown at the same rate.
 

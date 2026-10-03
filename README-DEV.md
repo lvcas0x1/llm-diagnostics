@@ -6,7 +6,7 @@ Specification, internals, build, release, and tests. For installing and setting 
 Native macOS menu bar app (SwiftUI `MenuBarExtra`, macOS 14+) that shows token usage and estimated
 API cost per session for Claude Code, the Codex CLI, and GitHub Copilot (CLI and VS Code Chat).
 
-- Menu bar: `<tokens>k / $<cost>`, the total of all enabled providers since collection started
+- Menu bar: `<tokens> / $<cost>` (tokens with a unit, e.g. `80.9M / $29.25`; the panel uses the same format), the total of all enabled providers since collection started
   (or since the provider's last reset).
 - Panel: the same total, then one section per enabled provider in the order Claude Code, Codex,
   GitHub Copilot CLI. Each section shows its subtotal and its sessions, most recent first.
@@ -348,7 +348,7 @@ APP_VERSION=0.1.0 ./scripts/build-app.sh
 | Unit (`Tests/LLMUsageBarTests/UnitTests.swift`) | OTLP metrics and trace parsing, HTTP request parsing (Content-Length, chunked, pipelined), OpenAI price table parsing, Codex file parsing, collection periods, recent keys, formatting |
 | Integration (`Tests/LLMUsageBarTests/IntegrationTests.swift`) | Each provider's store with files in a temporary directory: accumulation, cumulative series, exclusion of usage from before collection and from off periods, de-duplication of re-sent data, Codex pricing, reset, persistence, providers that are off; the receiver over a real socket, routing by provider, toggling providers with open connections |
 | System (`scripts/system-test.sh`) | A copy of the built app (bundle ID `local.llm-usage-bar.systemtest`, port 4319, temporary data directory and `CODEX_HOME`): all-off defaults, all providers on, restart persistence, providers off, no price download while Codex is off |
-| Functional, real app (`scripts/real-app-test.sh`) | The installed app (`/Applications/LLMUsageBar.app` by default) through its panel: Settings/Hide settings, expand/collapse, each Collect toggle alone and combined (receiver open/closed, payloads recorded or ignored, sections shown/hidden, `0k / $0` when all off, price controls disabled while Codex is off), Port change 4318→4320→4318 (listening port and green status text), price auto-update toggle, Update prices now, each Reset alone (others untouched), Quit and relaunch (settings and data persist). Backs up and restores the data directory and preferences; telemetry received during the test is not kept |
+| Functional, real app (`scripts/real-app-test.sh`) | The installed app (`/Applications/LLMUsageBar.app` by default) through its panel: Settings/Hide settings, expand/collapse, each Collect toggle alone and combined (receiver open/closed, payloads recorded or ignored, sections shown/hidden, `0 / $0` when all off, price controls disabled while Codex is off), Port change 4318→4320→4318 (listening port and green status text), price auto-update toggle, Update prices now, each Reset alone (others untouched), Quit and relaunch (settings and data persist). Backs up and restores the data directory and preferences; telemetry received during the test is not kept |
 | UI (`scripts/ui-test.sh`) | A copy of the app (bundle ID `local.llm-usage-bar.uitest`, port 4319) opened with a real mouse click: Settings shown/hidden, a session expanded/collapsed, closed and reopened; after each step the window height must match the content and the top edge must not move. Screenshots in `build/ui-test/` |
 
 - `scripts/test.sh` passes the Swift Testing macro plugin path, which Command Line Tools keep

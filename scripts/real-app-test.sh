@@ -156,7 +156,7 @@ toggle "Collect Codex"
 check "pref codex = 0" eq "$(pref codex)" 0
 check "Codex section hidden" until_ok not_has "Codex"
 check "empty-state message" until_ok has "Nothing is collected. Turn on a provider in Settings."
-check "menu bar shows 0k / \$0" eq "$($AX menutitle $PID)" '0k / $0'
+check "menu bar shows 0 / \$0" eq "$($AX menutitle $PID)" '0 / $0'
 check "'Update prices now' disabled" enabled "Update prices now" 0
 check "'Update OpenAI prices daily' disabled" enabled "Update OpenAI prices daily from developers.openai.com" 0
 

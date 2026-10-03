@@ -226,7 +226,7 @@ struct SectionHeader: View {
         HStack {
             Text(title).font(.headline)
             Spacer()
-            Text("\(Format.kTokens(tokens)) / \(Format.usd(cost))")
+            Text("\(Format.tokens(tokens)) / \(Format.usd(cost))")
                 .font(.callout).foregroundStyle(.secondary).monospacedDigit()
         }
     }
