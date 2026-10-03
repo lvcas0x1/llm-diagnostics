@@ -251,6 +251,7 @@ APP_VERSION=0.1.0 ./scripts/build-app.sh
 ./scripts/test.sh          # unit, integration, and regression tests, 45 tests, about 2 seconds
 ./scripts/system-test.sh   # end-to-end test of the built app, 20 checks, about 2 minutes
 ./scripts/ui-test.sh       # UI test of the menu bar panel, 10 checks, about 30 seconds
+./scripts/real-app-test.sh # every Settings control on the installed app, 66 checks, about 2 minutes
 ```
 
 | Level | Covers |
@@ -259,6 +260,7 @@ APP_VERSION=0.1.0 ./scripts/build-app.sh
 | Unit (`Tests/LLMUsageBarTests/UnitTests.swift`) | OTLP metrics and trace parsing, HTTP request parsing (Content-Length, chunked, pipelined), OpenAI price table parsing, Codex file parsing, collection periods, recent keys, formatting |
 | Integration (`Tests/LLMUsageBarTests/IntegrationTests.swift`) | Each provider's store with files in a temporary directory: accumulation, cumulative series, exclusion of usage from before collection and from off periods, de-duplication of re-sent data, Codex pricing, reset, persistence, providers that are off; the receiver over a real socket, routing by provider, toggling providers with open connections |
 | System (`scripts/system-test.sh`) | A copy of the built app (bundle ID `local.llm-usage-bar.systemtest`, port 4319, temporary data directory and `CODEX_HOME`): all-off defaults, all providers on, restart persistence, providers off, no price download while Codex is off |
+| Functional, real app (`scripts/real-app-test.sh`) | The installed app (`/Applications/LLMUsageBar.app` by default) through its panel: Settings/Hide settings, expand/collapse, each Collect toggle alone and combined (receiver open/closed, payloads recorded or ignored, sections shown/hidden, `0k / $0` when all off, price controls disabled while Codex is off), Port change 4318→4320→4318 (listening port and green status text), Copy env block, price auto-update toggle, Update prices now, each Reset alone (others untouched), Quit and relaunch (settings and data persist). Backs up and restores the data directory, preferences, and clipboard; telemetry received during the test is not kept |
 | UI (`scripts/ui-test.sh`) | A copy of the app (bundle ID `local.llm-usage-bar.uitest`, port 4319) opened with a real mouse click: Settings shown/hidden, a session expanded/collapsed, closed and reopened; after each step the window height must match the content and the top edge must not move. Screenshots in `build/ui-test/` |
 
 - `scripts/test.sh` passes the Swift Testing macro plugin path, which Command Line Tools keep
