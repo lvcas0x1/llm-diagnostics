@@ -22,7 +22,7 @@ func claudePoint(_ kind: UsagePoint.Kind, session: String = "s1", model: String 
                  start: Date? = nil, end: Date = Date()) -> UsagePoint {
     UsagePoint(kind: kind, sessionId: session, model: model, tokenType: kind == .tokens ? type : nil,
                value: value, isCumulative: cumulative, seriesKey: series ?? "\(kind)-\(type ?? "")",
-               label: nil, terminalType: nil, time: end, startTime: start)
+               label: nil, time: end, startTime: start)
 }
 
 @Suite("Integration", .serialized)
@@ -41,8 +41,8 @@ struct IntegrationTests {
         store.ingest([claudePoint(.tokens, type: "input", value: 100),
                       claudePoint(.tokens, type: "output", value: 50),
                       claudePoint(.cost, value: 0.01)])
-        #expect(store.totalTokens(.all) == 150)
-        #expect(abs(store.totalCost(.all) - 0.01) < 1e-12)
+        #expect(store.totalTokens == 150)
+        #expect(abs(store.totalCost - 0.01) < 1e-12)
         #expect(store.sessions["s1"]?.byModel?["claude-opus-5-5"]?.tokens == 150)
 
         // Cumulative series: 200 then 260 adds 200 + 60; a drop to 30 is a restart and adds 30.
@@ -62,18 +62,18 @@ struct IntegrationTests {
 
         let reloaded = ClaudeStore()
         reloaded.setRunning(true)
-        #expect(reloaded.totalTokens(.all) == 500)
-        #expect(reloaded.totalCost(.all) == 1.5)
+        #expect(reloaded.totalTokens == 500)
+        #expect(reloaded.totalCost == 1.5)
 
         // After a reset, a series that started before it is only a baseline; later increases count.
         reloaded.reset()
-        #expect(reloaded.totalTokens(.all) == 0)
+        #expect(reloaded.totalTokens == 0)
         let processStart = Date().addingTimeInterval(-600)
         reloaded.ingest([claudePoint(.tokens, value: 520, cumulative: true, series: "c", start: processStart)])
-        #expect(reloaded.totalTokens(.all) == 0)
+        #expect(reloaded.totalTokens == 0)
         reloaded.ingest([claudePoint(.tokens, value: 540, cumulative: true, series: "c", start: processStart,
                                      end: Date().addingTimeInterval(1))])
-        #expect(reloaded.totalTokens(.all) == 20)
+        #expect(reloaded.totalTokens == 20)
         reloaded.setRunning(false)
 
         // A store that is never turned on does not create or read the file.
@@ -93,19 +93,19 @@ struct IntegrationTests {
 
         // Delta interval that started before collection: not counted. Fully after: counted.
         store.ingest([claudePoint(.tokens, value: 100, start: beforeOn, end: on.addingTimeInterval(0.01))])
-        #expect(store.totalTokens(.all) == 0)
+        #expect(store.totalTokens == 0)
         store.ingest([claudePoint(.tokens, value: 40, start: on.addingTimeInterval(0.01), end: on.addingTimeInterval(0.02))])
-        #expect(store.totalTokens(.all) == 40)
+        #expect(store.totalTokens == 40)
 
         // Delayed delta from before collection started: not counted.
         store.ingest([claudePoint(.tokens, value: 7, start: beforeOn.addingTimeInterval(-60), end: beforeOn)])
-        #expect(store.totalTokens(.all) == 40)
+        #expect(store.totalTokens == 40)
 
         // Cumulative series from a process that started before collection: first value is a baseline.
         store.ingest([claudePoint(.cost, value: 3.0, cumulative: true, series: "cost-c", start: beforeOn, end: on.addingTimeInterval(0.01))])
-        #expect(store.totalCost(.all) == 0)
+        #expect(store.totalCost == 0)
         store.ingest([claudePoint(.cost, value: 3.5, cumulative: true, series: "cost-c", start: beforeOn, end: on.addingTimeInterval(0.02))])
-        #expect(abs(store.totalCost(.all) - 0.5) < 1e-12)
+        #expect(abs(store.totalCost - 0.5) < 1e-12)
 
         // Turned off and on again: a delta interval that overlaps the off period is not counted,
         // and a cumulative increase across the off period is only a new baseline.
@@ -117,10 +117,10 @@ struct IntegrationTests {
         let on2 = Date()
         store.ingest([claudePoint(.tokens, value: 9, start: off, end: on2.addingTimeInterval(0.01))])
         store.ingest([claudePoint(.cost, value: 9.0, cumulative: true, series: "cost-c", start: beforeOn, end: on2.addingTimeInterval(0.01))])
-        #expect(store.totalTokens(.all) == 40)
-        #expect(abs(store.totalCost(.all) - 0.5) < 1e-12)
+        #expect(store.totalTokens == 40)
+        #expect(abs(store.totalCost - 0.5) < 1e-12)
         store.ingest([claudePoint(.cost, value: 9.25, cumulative: true, series: "cost-c", start: beforeOn, end: on2.addingTimeInterval(0.02))])
-        #expect(abs(store.totalCost(.all) - 0.75) < 1e-12)
+        #expect(abs(store.totalCost - 0.75) < 1e-12)
         store.setRunning(false)
     }
 
@@ -138,14 +138,14 @@ struct IntegrationTests {
         store.ingest([reading(100, 0.01, series: "a", start: s1), reading(150, 0.02, series: "a", start: s1),
                       reading(100, 0.01, series: "a", start: s1),  // late re-send of the first reading
                       reading(180, 0.03, series: "a", start: s1)])
-        #expect(store.totalTokens(.all) == 180)
+        #expect(store.totalTokens == 180)
 
         // Series started before collection: only increases after the first reading count.
         let s2 = on.addingTimeInterval(-60)
         store.ingest([reading(1000, 0.01, series: "b", start: s2), reading(1050, 0.02, series: "b", start: s2),
                       reading(1020, 0.015, series: "b", start: s2),  // late, out of order
                       reading(1080, 0.03, series: "b", start: s2)])
-        #expect(store.totalTokens(.all) == 180 + 80)
+        #expect(store.totalTokens == 180 + 80)
         store.setRunning(false)
     }
 
@@ -167,8 +167,137 @@ struct IntegrationTests {
              ]]]]]
         }
         store.ingest(OTLPParser.parseMetrics(jsonData(["resourceMetrics": [resource("a"), resource("b")]])))
-        #expect(store.totalTokens(.all) == 200)
+        #expect(store.totalTokens == 200)
         #expect(store.sessions.count == 2)
+        store.setRunning(false)
+    }
+
+    /// Reported: state saved by v0.0.1 (series keys without session/resource) held cumulative 100;
+    /// the new build then received 150 for the same series and counted 250 instead of 150.
+    @Test func claudeContinuesCumulativeSeriesSavedByOlderBuilds() throws {
+        let dirs = useTemporaryDirectories()
+        let start = Date().addingTimeInterval(-600), t1 = Date().addingTimeInterval(-60)
+        let ref = Date(timeIntervalSinceReferenceDate: 0)
+        let startNanos = String(Int64(start.timeIntervalSince1970 * 1e9))
+        // v0.0.1 key: name|<point attributes>|<start>
+        let oldKey = "claude_code.token.usage|model=m,session.id=s1,type=input|" + startNanos
+        let session: [String: Any] = ["id": "s1", "isLocal": false, "tokens": ["input": 100.0], "costUSD": 0.0,
+                                      "byModel": ["m": ["tokens": 100.0, "costUSD": 0.0]],
+                                      "firstSeen": start.timeIntervalSince(ref), "lastSeen": t1.timeIntervalSince(ref)]
+        let old: [String: Any] = ["sessions": ["s1": session], "seriesLast": [oldKey: 100.0],
+                                  "seriesLastTime": [oldKey: t1.timeIntervalSince(ref)],
+                                  "periods": [["start": start.addingTimeInterval(-60).timeIntervalSince(ref)]]]
+        try FileManager.default.createDirectory(at: dirs.support, withIntermediateDirectories: true)
+        try jsonData(old).write(to: dirs.support.appendingPathComponent("claude-state.json"))
+
+        let store = ClaudeStore()
+        store.setRunning(true)
+        let body = metricsBody(name: "claude_code.token.usage", cumulative: true,
+                               points: [(["session.id": "s1", "model": "m", "type": "input"], 150, startNanos)],
+                               resource: ["service.name": "claude-code"],
+                               time: String(Int64(Date().timeIntervalSince1970 * 1e9)))
+        store.ingest(OTLPParser.parseMetrics(body))
+        #expect(store.totalTokens == 150)
+        store.setRunning(false)
+    }
+
+    /// Reported: after the upgrade, a re-sent older reading arrived first and used up the migrated
+    /// reading; the next cumulative 150 then counted in full (250 instead of 150). Also across a restart.
+    @Test(arguments: [false, true])
+    func claudeKeepsMigratedReadingWhenAStaleReadingArrivesFirst(restartBetween: Bool) throws {
+        let dirs = useTemporaryDirectories()
+        let start = Date().addingTimeInterval(-600), t1 = Date().addingTimeInterval(-60)
+        let ref = Date(timeIntervalSinceReferenceDate: 0)
+        let startNanos = String(Int64(start.timeIntervalSince1970 * 1e9))
+        let oldKey = "claude_code.token.usage|model=m,session.id=s1,type=input|" + startNanos
+        let session: [String: Any] = ["id": "s1", "isLocal": false, "tokens": ["input": 100.0], "costUSD": 0.0,
+                                      "firstSeen": start.timeIntervalSince(ref), "lastSeen": t1.timeIntervalSince(ref)]
+        let old: [String: Any] = ["sessions": ["s1": session], "seriesLast": [oldKey: 100.0],
+                                  "seriesLastTime": [oldKey: t1.timeIntervalSince(ref)],
+                                  "periods": [["start": start.addingTimeInterval(-60).timeIntervalSince(ref)]]]
+        try FileManager.default.createDirectory(at: dirs.support, withIntermediateDirectories: true)
+        try jsonData(old).write(to: dirs.support.appendingPathComponent("claude-state.json"))
+        func reading(_ value: Double, at time: Date) -> Data {
+            metricsBody(name: "claude_code.token.usage", cumulative: true,
+                        points: [(["session.id": "s1", "model": "m", "type": "input"], value, startNanos)],
+                        time: String(Int64(time.timeIntervalSince1970 * 1e9)))
+        }
+        var store = ClaudeStore()
+        store.setRunning(true)
+        // A re-sent older reading (before the saved one), so it is skipped as stale.
+        store.ingest(OTLPParser.parseMetrics(reading(90, at: t1.addingTimeInterval(-10))))
+        #expect(store.totalTokens == 100)
+        if restartBetween {
+            // App quit and relaunched: the app saves on quit, and the collection period stays open
+            // (turning Claude Code off would close it, and increases across an off period are not counted).
+            store.saveNow()
+            store = ClaudeStore()
+            store.setRunning(true)
+        }
+        store.ingest(OTLPParser.parseMetrics(reading(150, at: Date())))
+        #expect(store.totalTokens == 150)
+        store.setRunning(false)
+    }
+
+    /// Reported: span IDs saved in upper case by an older build were not normalized, so the same
+    /// span re-sent (now lower-cased on arrival) counted twice.
+    @Test func copilotNormalizesSavedSpanIds() throws {
+        let dirs = useTemporaryDirectories()
+        let now = Date()
+        let ref = Date(timeIntervalSinceReferenceDate: 0)
+        let saved: [String: Any] = [
+            "sessions": ["c1": ["id": "c1", "lastSeen": now.timeIntervalSince(ref), "nanoAIU": 1_000_000.0,
+                                "byModel": ["m": ["input": 10.0, "output": 0.0, "cacheRead": 0.0, "cacheCreation": 0.0]]]],
+            "periods": [["start": now.addingTimeInterval(-600).timeIntervalSince(ref)]],
+            "recent": ["seen": ["5B8EFFF798038103": now.timeIntervalSince(ref)]],
+        ]
+        try FileManager.default.createDirectory(at: dirs.support, withIntermediateDirectories: true)
+        try jsonData(saved).write(to: dirs.support.appendingPathComponent("copilot-state.json"))
+        let store = CopilotStore()
+        store.setRunning(true)
+        let resent = CopilotParser.parseTraces(tracesBody([("5B8EFFF798038103", [
+            "gen_ai.operation.name": "chat", "gen_ai.conversation.id": "c1", "gen_ai.usage.input_tokens": 10,
+            "github.copilot.nano_aiu": 1_000_000.0])]))
+        store.ingest(resent.map { s in
+            CopilotSpan(spanId: s.spanId, sessionId: s.sessionId, label: s.label, time: now, model: "m",
+                        tokens: s.tokens, nanoAIU: s.nanoAIU, startTime: now)
+        })
+        #expect(store.totalTokens == 10)
+        #expect(abs(store.totalCost - 0.00001) < 1e-12)
+        store.setRunning(false)
+    }
+
+    /// Unversioned state may already use the current key (saved after the key change): continue it too.
+    @Test func claudeContinuesUnversionedStateWithCurrentKeys() throws {
+        let dirs = useTemporaryDirectories()
+        let start = Date().addingTimeInterval(-600), t1 = Date().addingTimeInterval(-60)
+        let ref = Date(timeIntervalSinceReferenceDate: 0)
+        let startNanos = String(Int64(start.timeIntervalSince1970 * 1e9))
+        let body = { (value: Double) in
+            metricsBody(name: "claude_code.token.usage", cumulative: true,
+                        points: [(["session.id": "s1", "model": "m", "type": "input"], value, startNanos)],
+                        time: String(Int64(Date().timeIntervalSince1970 * 1e9)))
+        }
+        let currentKey = try #require(OTLPParser.parseMetrics(body(0)).first?.seriesKey)
+        let session: [String: Any] = ["id": "s1", "isLocal": false, "tokens": ["input": 100.0], "costUSD": 0.0,
+                                      "firstSeen": start.timeIntervalSince(ref), "lastSeen": t1.timeIntervalSince(ref)]
+        let old: [String: Any] = ["sessions": ["s1": session], "seriesLast": [currentKey: 100.0],
+                                  "seriesLastTime": [currentKey: t1.timeIntervalSince(ref)],
+                                  "periods": [["start": start.addingTimeInterval(-60).timeIntervalSince(ref)]]]
+        try FileManager.default.createDirectory(at: dirs.support, withIntermediateDirectories: true)
+        try jsonData(old).write(to: dirs.support.appendingPathComponent("claude-state.json"))
+
+        let store = ClaudeStore()
+        store.setRunning(true)
+        store.ingest(OTLPParser.parseMetrics(body(150)))
+        #expect(store.totalTokens == 150)
+        store.saveNow()
+        // Saved again with a format version; the reading continues normally.
+        let reloaded = ClaudeStore()
+        reloaded.setRunning(true)
+        reloaded.ingest(OTLPParser.parseMetrics(body(170)))
+        #expect(reloaded.totalTokens == 170)
+        reloaded.setRunning(false)
         store.setRunning(false)
     }
 
@@ -180,17 +309,17 @@ struct IntegrationTests {
         let point = claudePoint(.tokens, value: 100, start: start, end: end)
         store.ingest([point])
         store.ingest([point])  // re-sent export
-        #expect(store.totalTokens(.all) == 100)
+        #expect(store.totalTokens == 100)
         store.saveNow()
 
         // Still recognised after a restart.
         let reloaded = ClaudeStore()
         reloaded.setRunning(true)
         reloaded.ingest([point])
-        #expect(reloaded.totalTokens(.all) == 100)
+        #expect(reloaded.totalTokens == 100)
         // The next interval of the same series is new data.
         reloaded.ingest([claudePoint(.tokens, value: 5, start: end, end: end.addingTimeInterval(1))])
-        #expect(reloaded.totalTokens(.all) == 105)
+        #expect(reloaded.totalTokens == 105)
         reloaded.setRunning(false)
     }
 
@@ -290,9 +419,10 @@ struct IntegrationTests {
 
     // MARK: Copilot store
 
-    static func chat(_ id: String, model: String, input: Double, output: Double) -> CopilotSpan {
-        CopilotSpan(spanId: id, sessionId: "c1", label: "repo", time: Date(),
-                    kind: .chat(model: model, tokens: CopilotTokens(input: input, output: output)))
+    static func chat(_ id: String, model: String, input: Double, output: Double, nanoAIU: Double = 0,
+                     time: Date = Date(), startTime: Date? = nil) -> CopilotSpan {
+        CopilotSpan(spanId: id, sessionId: "c1", label: "repo", time: time, model: model,
+                    tokens: CopilotTokens(input: input, output: output), nanoAIU: nanoAIU, startTime: startTime)
     }
 
     @Test func copilotExcludesSpansFromBeforeCollectionAndDedupesBeyondOldLimit() {
@@ -302,16 +432,12 @@ struct IntegrationTests {
         store.setRunning(true)
         let t = Date().addingTimeInterval(1)
 
-        // A top-level invocation that started before collection: its AI units are not counted.
-        store.ingest([CopilotSpan(spanId: "early", sessionId: "c1", label: nil, time: t,
-                                  kind: .topLevelAgent(nanoAIU: 5_000_000_000), startTime: beforeOn)])
-        #expect(store.totalCost == 0)
+        // A request that started before collection: its tokens and AI units are not counted.
+        store.ingest([Self.chat("early", model: "m", input: 1, output: 1, nanoAIU: 5_000_000_000, time: t, startTime: beforeOn)])
+        #expect(store.totalCost == 0 && store.totalTokens == 0)
 
         // More spans than the old 20,000-ID limit; the first one re-sent afterwards is still a duplicate.
-        let many = (0..<25_000).map { i in
-            CopilotSpan(spanId: "s\(i)", sessionId: "c1", label: nil, time: t,
-                        kind: .chat(model: "m", tokens: CopilotTokens(input: 1, output: 0)), startTime: t)
-        }
+        let many = (0..<25_000).map { i in Self.chat("s\(i)", model: "m", input: 1, output: 0, time: t, startTime: t) }
         store.ingest(many)
         #expect(store.totalTokens == 25_000)
         store.ingest([many[0]])
@@ -319,8 +445,7 @@ struct IntegrationTests {
 
         // Data older than the de-duplication window cannot be checked and is not counted.
         let old = Date().addingTimeInterval(-RecentKeys.window - 60)
-        store.ingest([CopilotSpan(spanId: "old", sessionId: "c1", label: nil, time: old,
-                                  kind: .chat(model: "m", tokens: CopilotTokens(input: 1, output: 0)), startTime: old)])
+        store.ingest([Self.chat("old", model: "m", input: 1, output: 0, time: old, startTime: old)])
         #expect(store.totalTokens == 25_000)
         store.setRunning(false)
     }
@@ -332,9 +457,8 @@ struct IntegrationTests {
         #expect(store.sessions.isEmpty, "ingest while stopped must be ignored")
 
         store.setRunning(true)
-        let batch = [Self.chat("a", model: "claude-sonnet-5", input: 1000, output: 100),
-                     Self.chat("b", model: "gpt-6-luna", input: 300, output: 30),
-                     CopilotSpan(spanId: "r", sessionId: "c1", label: nil, time: Date(), kind: .topLevelAgent(nanoAIU: 2_500_000_000))]
+        let batch = [Self.chat("a", model: "claude-sonnet-5", input: 1000, output: 100, nanoAIU: 2_000_000_000),
+                     Self.chat("b", model: "gpt-6-luna", input: 300, output: 30, nanoAIU: 500_000_000)]
         store.ingest(batch)
         store.ingest(batch)  // re-sent export
         #expect(store.totalTokens == 1430)

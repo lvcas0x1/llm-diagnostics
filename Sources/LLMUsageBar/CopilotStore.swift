@@ -12,72 +12,81 @@ struct CopilotTokens: Codable, Sendable {
     var total: Double { input + output }
 }
 
-/// One span from a GitHub Copilot CLI trace export that carries usage.
+/// One LLM request (`chat` span) from a GitHub Copilot trace export.
 struct CopilotSpan: Sendable {
-    enum Kind: Sendable {
-        /// One LLM request: tokens per model.
-        case chat(model: String, tokens: CopilotTokens)
-        /// Top-level agent invocation: AI units for the whole invocation, subagents included.
-        case topLevelAgent(nanoAIU: Double)
-    }
-
     let spanId: String
     let sessionId: String
     let label: String?
     /// Span end (`endTimeUnixNano`).
     let time: Date
-    let kind: Kind
+    let model: String
+    let tokens: CopilotTokens
+    /// AI units of this request, in nano AI units.
+    let nanoAIU: Double
     /// Span start (`startTimeUnixNano`).
     var startTime: Date? = nil
 }
 
-/// Parses OTLP/HTTP JSON trace exports (ExportTraceServiceRequest) from Copilot CLI.
+/// Parses OTLP/HTTP trace exports (ExportTraceServiceRequest) from Copilot CLI and from the
+/// Copilot SDK behind VS Code's Chat.
 /// Span and attribute names: https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#opentelemetry-monitoring
 enum CopilotParser {
+    /// OTLP/HTTP JSON (ExportTraceServiceRequest).
     static func parseTraces(_ data: Data) -> [CopilotSpan] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let resourceSpans = root["resourceSpans"] as? [[String: Any]] else { return [] }
-        var out: [CopilotSpan] = []
+        var raw: [OTLPSpan] = []
         for rs in resourceSpans {
             let resource = OTLPParser.attributes((rs["resource"] as? [String: Any])?["attributes"])
             for ss in rs["scopeSpans"] as? [[String: Any]] ?? [] {
                 for span in ss["spans"] as? [[String: Any]] ?? [] {
-                    let a = OTLPParser.attributes(span["attributes"])
-                    guard let spanId = span["spanId"] as? String,
-                          let sessionId = a["gen_ai.conversation.id"],
-                          let op = a["gen_ai.operation.name"] else { continue }
-                    func n(_ k: String) -> Double { a[k].flatMap(Double.init) ?? 0 }
-                    let kind: CopilotSpan.Kind
-                    switch op {
-                    case "chat":
-                        let model = a["gen_ai.response.model"] ?? a["gen_ai.request.model"] ?? "unknown"
-                        kind = .chat(model: model, tokens: CopilotTokens(
-                            input: n("gen_ai.usage.input_tokens"), output: n("gen_ai.usage.output_tokens"),
-                            cacheRead: n("gen_ai.usage.cache_read.input_tokens"),
-                            cacheCreation: n("gen_ai.usage.cache_creation.input_tokens")))
-                    // Only top-level sessions carry server.address; read AI units there only,
-                    // because child spans repeat them ("summing it across every span double-counts").
-                    case "invoke_agent" where a["server.address"] != nil:
-                        kind = .topLevelAgent(nanoAIU: n("github.copilot.nano_aiu"))
-                    default:
-                        continue
-                    }
-                    let nanos = OTLPParser.number(span["endTimeUnixNano"]) ?? 0
-                    let startNanos = OTLPParser.number(span["startTimeUnixNano"]) ?? 0
-                    out.append(CopilotSpan(
-                        spanId: spanId, sessionId: sessionId,
-                        label: resource[OTLPParser.labelAttribute],
-                        time: nanos > 0 ? Date(timeIntervalSince1970: nanos / 1e9) : Date(),
-                        kind: kind,
-                        startTime: startNanos > 0 ? Date(timeIntervalSince1970: startNanos / 1e9) : nil))
+                    guard let spanId = span["spanId"] as? String else { continue }
+                    // "case-insensitive hex-encoded strings" (OTLP/JSON); protobuf IDs become lowercase hex.
+                    raw.append(OTLPSpan(
+                        spanId: spanId.lowercased(),
+                        parentSpanId: (span["parentSpanId"] as? String ?? "").lowercased(),
+                        startNanos: OTLPParser.number(span["startTimeUnixNano"]) ?? 0,
+                        endNanos: OTLPParser.number(span["endTimeUnixNano"]) ?? 0,
+                        attributes: OTLPParser.attributes(span["attributes"]),
+                        resource: resource))
                 }
             }
         }
-        return out
+        return spans(from: raw)
+    }
+
+    /// OTLP/HTTP protobuf (ExportTraceServiceRequest); nil when the body is not valid protobuf.
+    static func parseTracesProtobuf(_ data: Data) -> [CopilotSpan]? {
+        OTLPProtobuf.traceSpans(data).map(spans(from:))
+    }
+
+    /// Usage comes from `chat` spans only, one per LLM request: tokens and that request's AI units.
+    /// `invoke_agent` spans repeat the same AI units ("summing it across every span double-counts"),
+    /// and which one is top-level differs by host (Copilot CLI: no parent; VS Code wraps it in its
+    /// own spans), so they are not used. Observed: the chat spans' AI units add up to the top-level
+    /// invoke_agent's and to the "AI Credits" Copilot CLI prints.
+    static func spans(from raw: [OTLPSpan]) -> [CopilotSpan] {
+        raw.compactMap { span in
+            let a = span.attributes
+            guard !span.spanId.isEmpty, a["gen_ai.operation.name"] == "chat",
+                  let sessionId = a["gen_ai.conversation.id"] else { return nil }
+            func n(_ k: String) -> Double { a[k].flatMap(Double.init) ?? 0 }
+            return CopilotSpan(
+                spanId: span.spanId, sessionId: sessionId,
+                label: span.resource[OTLPParser.labelAttribute],
+                time: span.endNanos > 0 ? Date(timeIntervalSince1970: span.endNanos / 1e9) : Date(),
+                model: a["gen_ai.response.model"] ?? a["gen_ai.request.model"] ?? "unknown",
+                tokens: CopilotTokens(
+                    input: n("gen_ai.usage.input_tokens"), output: n("gen_ai.usage.output_tokens"),
+                    cacheRead: n("gen_ai.usage.cache_read.input_tokens"),
+                    cacheCreation: n("gen_ai.usage.cache_creation.input_tokens")),
+                nanoAIU: n("github.copilot.nano_aiu"),
+                startTime: span.startNanos > 0 ? Date(timeIntervalSince1970: span.startNanos / 1e9) : nil)
+        }
     }
 }
 
-/// Usage accumulated by this app for one Copilot CLI session.
+/// Usage accumulated by this app for one Copilot session.
 struct CopilotSession: Codable, Identifiable {
     let id: String
     var label: String?
@@ -87,7 +96,7 @@ struct CopilotSession: Codable, Identifiable {
 
     var name: String { label ?? String(id.prefix(8)) }
     var totalTokens: Double { byModel.values.reduce(0) { $0 + $1.total } }
-    /// Assumption (not stated in GitHub docs): 1 AI unit = 1 AI credit = $0.01.
+    /// 1 AI unit = 1 AI credit = $0.01 (see `CopilotStore.usdPerAIUnit`).
     var costUSD: Double { nanoAIU / 1_000_000_000 * CopilotStore.usdPerAIUnit }
 }
 
@@ -103,7 +112,8 @@ private struct CopilotState: Codable {
 @MainActor
 final class CopilotStore: ObservableObject {
     /// "1 AI credit = $0.01 USD" (docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing).
-    /// Treating an OTel AI unit as one AI credit is an unverified assumption.
+    /// GitHub does not state that an OTel AI unit is one AI credit; observed with Copilot CLI 1.0.91,
+    /// the span's AI units matched the "AI Credits" the CLI printed.
     nonisolated static let usdPerAIUnit = 0.01
     @Published private var state = CopilotState()
     @Published private(set) var now = Date()
@@ -150,17 +160,13 @@ final class CopilotStore: ObservableObject {
             var s = state.sessions[span.sessionId] ?? CopilotSession(id: span.sessionId, lastSeen: span.time)
             if let label = span.label { s.label = label }
             s.lastSeen = max(s.lastSeen, Date())
-            switch span.kind {
-            case .chat(let model, let t):
-                var m = s.byModel[model] ?? CopilotTokens()
-                m.input += t.input
-                m.output += t.output
-                m.cacheRead += t.cacheRead
-                m.cacheCreation += t.cacheCreation
-                s.byModel[model] = m
-            case .topLevelAgent(let nanoAIU):
-                s.nanoAIU += nanoAIU
-            }
+            var m = s.byModel[span.model] ?? CopilotTokens()
+            m.input += span.tokens.input
+            m.output += span.tokens.output
+            m.cacheRead += span.tokens.cacheRead
+            m.cacheCreation += span.tokens.cacheCreation
+            s.byModel[span.model] = m
+            s.nanoAIU += span.nanoAIU
             state.sessions[span.sessionId] = s
         }
         state.recent = recent
@@ -189,6 +195,8 @@ final class CopilotStore: ObservableObject {
         if let data = try? Data(contentsOf: fileURL),
            let saved = try? JSONDecoder().decode(CopilotState.self, from: data) {
             state = saved
+            // Span IDs are case-insensitive; older builds saved them as received.
+            state.recent?.mapKeys { $0.lowercased() }
         }
     }
 

@@ -1,9 +1,10 @@
 import Foundation
 import Network
 
-/// Minimal HTTP/1.1 server that accepts OTLP/HTTP JSON exports.
-/// `/v1/metrics` carries Claude Code usage and `/v1/traces` GitHub Copilot CLI usage; each is
-/// parsed only while its provider is accepted. Other paths (e.g. `/v1/logs`) are acknowledged and dropped.
+/// Minimal HTTP/1.1 server that accepts OTLP/HTTP exports.
+/// `/v1/metrics` carries Claude Code usage (JSON only) and `/v1/traces` GitHub Copilot usage
+/// (JSON or protobuf); each is parsed only while its provider is accepted. Other paths
+/// (e.g. `/v1/logs`) are acknowledged and dropped.
 final class OTLPServer: @unchecked Sendable {
     enum State: Equatable { case stopped, listening(port: UInt16), failed(String) }
 
@@ -12,7 +13,7 @@ final class OTLPServer: @unchecked Sendable {
     private let onPoints: @Sendable ([UsagePoint]) -> Void
     private let onSpans: @Sendable ([CopilotSpan]) -> Void
     private let onState: @Sendable (State) -> Void
-    /// Which payloads to parse; set together with start(port:accept:).
+    /// Which payloads to parse; set by start(port:metrics:traces:).
     private var acceptMetrics = false
     private var acceptTraces = false
 
@@ -146,7 +147,61 @@ final class OTLPServer: @unchecked Sendable {
         }
     }
 
+    // MARK: Request log (diagnostics)
+
+    /// When `LLM_USAGE_BAR_REQUEST_LOG` names a file, one line per request is appended: time,
+    /// method, path, content type, user agent, body size, what was parsed, and the response status.
+    /// Bodies are never written. Off unless the variable is set.
+    private static let requestLog: FileHandle? = {
+        guard let path = ProcessInfo.processInfo.environment["LLM_USAGE_BAR_REQUEST_LOG"] else { return nil }
+        FileManager.default.createFile(atPath: path, contents: nil)
+        let handle = FileHandle(forWritingAtPath: path)
+        handle?.seekToEndOfFile()
+        return handle
+    }()
+    private var logRequest: HTTPRequest?
+    private var logNote = ""
+
+    /// For the request log: each span's name, parent flag, attribute names, and the values of the
+    /// attributes the Copilot parser reads (no prompt or response content).
+    private static func describeTraces(_ body: Data, protobuf: Bool) -> String {
+        let raw: [OTLPSpan]
+        if protobuf {
+            raw = OTLPProtobuf.traceSpans(body) ?? []
+        } else if let root = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+            raw = (root["resourceSpans"] as? [[String: Any]] ?? []).flatMap { rs in
+                (rs["scopeSpans"] as? [[String: Any]] ?? []).flatMap { ss in
+                    (ss["spans"] as? [[String: Any]] ?? []).map { span in
+                        OTLPSpan(spanId: span["spanId"] as? String ?? "",
+                                 parentSpanId: span["parentSpanId"] as? String ?? "",
+                                 attributes: OTLPParser.attributes(span["attributes"]))
+                    }
+                }
+            }
+        } else {
+            return "unparsable"
+        }
+        let read = ["gen_ai.operation.name", "gen_ai.conversation.id", "gen_ai.request.model", "gen_ai.response.model",
+                    "gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "github.copilot.nano_aiu"]
+        return raw.map { s in
+            let values = read.compactMap { k in s.attributes[k].map { "\(k)=\(k == "gen_ai.conversation.id" ? "<set>" : $0)" } }
+            return "{parent=\(!s.parentSpanId.isEmpty) keys=\(s.attributes.keys.sorted().joined(separator: ",")) \(values.joined(separator: " "))}"
+        }.joined(separator: " ")
+    }
+
+    private func writeLog(status: String) {
+        guard let log = Self.requestLog else { return }
+        let r = logRequest
+        let fields = [ISO8601DateFormatter().string(from: Date()), r?.method ?? "-", r?.path ?? "-",
+                      r?.headers["content-type"] ?? "-", r?.headers["user-agent"] ?? "-",
+                      String(r?.body.count ?? 0), logNote.isEmpty ? "-" : logNote, status]
+        log.write(Data((fields.joined(separator: "\t") + "\n").utf8))
+        logRequest = nil
+        logNote = ""
+    }
+
     private func handle(_ req: HTTPRequest, on conn: NWConnection) {
+        logRequest = req
         guard req.method == "POST" else {
             respond(conn, status: req.method == "GET" ? "200 OK" : "405 Method Not Allowed", close: false)
             return
@@ -156,24 +211,43 @@ final class OTLPServer: @unchecked Sendable {
             return
         }
         let isMetrics = req.path.hasPrefix("/v1/metrics"), isTraces = req.path.hasPrefix("/v1/traces")
-        if (isMetrics || isTraces) && req.headers["content-type"]?.contains("protobuf") == true {
+        let isProtobuf = req.headers["content-type"]?.contains("protobuf") == true
+        if isMetrics && isProtobuf {
             respond(conn, status: "415 Unsupported Media Type", close: false)
+            return
+        }
+        if isTraces && isProtobuf {
+            // VS Code's own Copilot Chat exporter defaults to http/protobuf.
+            if acceptTraces {
+                guard let spans = CopilotParser.parseTracesProtobuf(req.body) else {
+                    respond(conn, status: "400 Bad Request", close: false)
+                    return
+                }
+                logNote = "spans=\(spans.count)" + (Self.requestLog != nil ? " " + Self.describeTraces(req.body, protobuf: true) : "")
+                if !spans.isEmpty { onSpans(spans) }
+            }
+            // An empty ExportTraceServiceResponse encodes to zero bytes.
+            respond(conn, status: "200 OK", close: false, protobuf: true)
             return
         }
         if isMetrics && acceptMetrics {
             let points = OTLPParser.parseMetrics(req.body)
+            logNote = "points=\(points.count)"
             if !points.isEmpty { onPoints(points) }
         }
         if isTraces && acceptTraces {
             let spans = CopilotParser.parseTraces(req.body)
+            logNote = "spans=\(spans.count)" + (Self.requestLog != nil ? " " + Self.describeTraces(req.body, protobuf: false) : "")
             if !spans.isEmpty { onSpans(spans) }
         }
         respond(conn, status: "200 OK", close: false)
     }
 
-    private func respond(_ conn: NWConnection, status: String, close: Bool) {
-        let body = "{}"
-        let head = "HTTP/1.1 \(status)\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\n"
+    private func respond(_ conn: NWConnection, status: String, close: Bool, protobuf: Bool = false) {
+        writeLog(status: status)
+        let body = protobuf ? "" : "{}"
+        let type = protobuf ? "application/x-protobuf" : "application/json"
+        let head = "HTTP/1.1 \(status)\r\nContent-Type: \(type)\r\nContent-Length: \(body.utf8.count)\r\n"
             + (close ? "Connection: close\r\n" : "") + "\r\n"
         conn.send(content: Data((head + body).utf8), completion: .contentProcessed { _ in
             if close { conn.cancel() }
@@ -256,6 +330,7 @@ struct HTTPRequest {
                 return .complete(body, end: end.upperBound)
             }
             guard buf.endIndex - dataStart >= size + 2 else { return .incomplete }
+            guard buf[(dataStart + size)..<(dataStart + size + 2)].elementsEqual(crlf) else { return .invalid }
             body.append(buf[dataStart..<(dataStart + size)])
             i = dataStart + size + 2
         }

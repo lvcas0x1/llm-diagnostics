@@ -64,3 +64,67 @@ struct CodexTimestampRegressionTests {
         #expect(f.records.map(\.time.timeIntervalSince1970) == [1790812802, 1790812803.25])
     }
 }
+
+@Suite("Regression: Copilot AI units")
+struct CopilotAIUnitRegressionTests {
+    /// Copilot in VS Code (observed): invoke_agent has a parent (VS Code's agent host span), so a
+    /// "no parent = top-level" rule found nothing and AI units stayed 0. Units now come from chat
+    /// spans, counted once however the invocation is wrapped.
+    @Test func aiUnitsComeFromChatSpansWhateverTheParents() {
+        func span(_ id: String, parent: String?, attrs: [String: Any]) -> [String: Any] {
+            var s: [String: Any] = ["traceId": "t", "spanId": id, "endTimeUnixNano": "1791019312796000000",
+                                    "attributes": attrs.map { otlpAttr($0.key, $0.value) }]
+            if let parent { s["parentSpanId"] = parent }
+            return s
+        }
+        let body = jsonData(["resourceSpans": [["scopeSpans": [["spans": [
+            span("host", parent: nil, attrs: ["vscode.agent_host.turnId": "t1"]),
+            span("agent", parent: "host", attrs: ["gen_ai.operation.name": "invoke_agent", "gen_ai.conversation.id": "c",
+                                                  "github.copilot.nano_aiu": 195_224_000.0]),
+            span("chat1", parent: "agent", attrs: ["gen_ai.operation.name": "chat", "gen_ai.conversation.id": "c",
+                                                   "gen_ai.usage.input_tokens": 22654, "gen_ai.usage.output_tokens": 136,
+                                                   "github.copilot.nano_aiu": 195_224_000.0]),
+        ]]]]]])
+        let spans = CopilotParser.parseTraces(body)
+        #expect(spans.map(\.nanoAIU) == [195_224_000])
+        #expect(spans.map(\.tokens.total) == [22790])
+    }
+
+    /// Copilot CLI 1.0.91 (observed): two chat requests in one invocation; their AI units add up
+    /// to the top-level invoke_agent's (155,944,000) and the CLI's "AI Credits 0.16".
+    @Test func multipleChatSpansAddUp() {
+        let spans = CopilotParser.parseTraces(tracesBody([
+            ("root", ["gen_ai.operation.name": "invoke_agent", "gen_ai.conversation.id": "c", "github.copilot.nano_aiu": 155_944_000.0]),
+            ("c1", ["gen_ai.operation.name": "chat", "gen_ai.conversation.id": "c", "github.copilot.nano_aiu": 80_000_000.0]),
+            ("c2", ["gen_ai.operation.name": "chat", "gen_ai.conversation.id": "c", "github.copilot.nano_aiu": 75_944_000.0]),
+        ], parents: ["c1": "root", "c2": "root"]))
+        #expect(spans.reduce(0) { $0 + $1.nanoAIU } == 155_944_000)
+    }
+}
+
+@Suite("Regression: review round 3")
+struct ReviewRound3RegressionTests {
+    @Test func chunkTerminatorMustBeCRLF() {
+        let bad = Data("POST /v1/traces HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nabcdXY3\r\nefg\r\n0\r\n\r\n".utf8)
+        guard case .invalid = HTTPRequest.parse(bad) else { Issue.record("expected invalid"); return }
+    }
+
+    @Test func varintOver64BitsIsRejected() {
+        // Field 1, varint whose 10th byte carries more than the 64th bit.
+        let over = Data([0x08] + Array(repeating: 0xff, count: 9) + [0x02])
+        #expect(OTLPProtobuf.traceSpans(over) == nil)
+        // UInt64.max is still valid.
+        let max = Data([0x08] + Array(repeating: 0xff, count: 9) + [0x01])
+        #expect(OTLPProtobuf.traceSpans(max) != nil)
+    }
+
+    @Test func spanIdsAreCaseInsensitive() {
+        func body(_ id: String) -> Data {
+            tracesBody([(id, ["gen_ai.operation.name": "chat", "gen_ai.conversation.id": "c",
+                              "gen_ai.usage.input_tokens": 10, "github.copilot.nano_aiu": 1_000_000.0])])
+        }
+        let upper = CopilotParser.parseTraces(body("5B8EFFF798038103"))
+        let lower = CopilotParser.parseTraces(body("5b8efff798038103"))
+        #expect(upper.map(\.spanId) == lower.map(\.spanId))
+    }
+}

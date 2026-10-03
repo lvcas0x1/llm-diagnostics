@@ -13,9 +13,11 @@ struct UsagePoint: Sendable {
     let isCumulative: Bool
     /// Identifies a time series; used to convert cumulative values to deltas.
     let seriesKey: String
+    /// The same series' key as builds up to v0.0.1 formed it (no session or resource attributes),
+    /// to continue series from state those builds saved.
+    var legacySeriesKey: String? = nil
     /// Value of the `cc.label` resource attribute, if the sender set one.
     let label: String?
-    let terminalType: String?
     /// End of the measured interval (`timeUnixNano`).
     let time: Date
     /// Start of the measured interval (`startTimeUnixNano`): for delta points the previous
@@ -58,6 +60,7 @@ enum OTLPParser {
                         }
                         let key = [name, "session=" + sessionId, joined(resourceAttrs), joined(attrs), start]
                             .joined(separator: "|")
+                        let legacyKey = name + "|" + joined(attrs) + "|" + start
                         let nanos = number(dp["timeUnixNano"]) ?? 0
                         points.append(UsagePoint(
                             kind: name == tokenMetric ? .tokens : .cost,
@@ -67,8 +70,8 @@ enum OTLPParser {
                             value: value,
                             isCumulative: cumulative,
                             seriesKey: key,
+                            legacySeriesKey: legacyKey,
                             label: attrs[labelAttribute] ?? resourceAttrs[labelAttribute],
-                            terminalType: attrs["terminal.type"],
                             time: nanos > 0 ? Date(timeIntervalSince1970: nanos / 1e9) : Date(),
                             startTime: number(dp["startTimeUnixNano"]).flatMap { $0 > 0 ? Date(timeIntervalSince1970: $0 / 1e9) : nil }
                         ))

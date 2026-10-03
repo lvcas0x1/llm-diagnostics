@@ -53,8 +53,8 @@ claude_metrics() {  # delta: 1000 input tokens and $0.05 for session sys-1
     local cost="{\"name\":\"claude_code.cost.usage\",\"sum\":{\"aggregationTemporality\":1,\"dataPoints\":[{\"attributes\":[$(attr session.id stringValue '"sys-1"'),$(attr model stringValue '"claude-opus-5-5"')],\"asDouble\":0.05}]}}"
     echo "{\"resourceMetrics\":[{\"scopeMetrics\":[{\"metrics\":[$tok,$cost]}]}]}"
 }
-copilot_traces() {  # chat 2000+100 tokens, top-level agent 3 AIU ($0.03)
-    local chat="{\"spanId\":\"$1-chat\",\"attributes\":[$(attr gen_ai.operation.name stringValue '"chat"'),$(attr gen_ai.conversation.id stringValue '"cp-1"'),$(attr gen_ai.response.model stringValue '"claude-sonnet-5"'),$(attr gen_ai.usage.input_tokens intValue '"2000"'),$(attr gen_ai.usage.output_tokens intValue '"100"')]}"
+copilot_traces() {  # chat 2000+100 tokens with 3 AIU ($0.03); the invoke_agent repeats 3 AIU and must not add
+    local chat="{\"spanId\":\"$1-chat\",\"attributes\":[$(attr gen_ai.operation.name stringValue '"chat"'),$(attr gen_ai.conversation.id stringValue '"cp-1"'),$(attr gen_ai.response.model stringValue '"claude-sonnet-5"'),$(attr gen_ai.usage.input_tokens intValue '"2000"'),$(attr gen_ai.usage.output_tokens intValue '"100"'),$(attr github.copilot.nano_aiu intValue '"3000000000"')]}"
     local agent="{\"spanId\":\"$1-agent\",\"attributes\":[$(attr gen_ai.operation.name stringValue '"invoke_agent"'),$(attr gen_ai.conversation.id stringValue '"cp-1"'),$(attr server.address stringValue '"api.githubcopilot.com"'),$(attr github.copilot.nano_aiu intValue '"3000000000"')]}"
     echo "{\"resourceSpans\":[{\"scopeSpans\":[{\"spans\":[$chat,$agent]}]}]}"
 }

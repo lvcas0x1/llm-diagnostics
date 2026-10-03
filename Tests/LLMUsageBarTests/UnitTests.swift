@@ -17,10 +17,10 @@ func jsonData(_ object: Any) -> Data { try! JSONSerialization.data(withJSONObjec
 
 /// ExportMetricsServiceRequest with one sum metric.
 func metricsBody(name: String, cumulative: Bool, points: [(attrs: [String: Any], value: Double, start: String)],
-                 resource: [String: Any] = [:]) -> Data {
+                 resource: [String: Any] = [:], time: String = "1790000000000000000") -> Data {
     let dps: [[String: Any]] = points.map { p in
         ["attributes": p.attrs.map { otlpAttr($0.key, $0.value) },
-         "startTimeUnixNano": p.start, "timeUnixNano": "1790000000000000000", "asDouble": p.value]
+         "startTimeUnixNano": p.start, "timeUnixNano": time, "asDouble": p.value]
     }
     return jsonData(["resourceMetrics": [[
         "resource": ["attributes": resource.map { otlpAttr($0.key, $0.value) }],
@@ -32,12 +32,16 @@ func metricsBody(name: String, cumulative: Bool, points: [(attrs: [String: Any],
 }
 
 /// ExportTraceServiceRequest with the given spans.
-func tracesBody(_ spans: [(id: String, attrs: [String: Any])], resource: [String: Any] = [:]) -> Data {
+/// ExportTraceServiceRequest with the given spans; `parents` maps a span ID to its parent span ID.
+func tracesBody(_ spans: [(id: String, attrs: [String: Any])], resource: [String: Any] = [:],
+                parents: [String: String] = [:]) -> Data {
     jsonData(["resourceSpans": [[
         "resource": ["attributes": resource.map { otlpAttr($0.key, $0.value) }],
         "scopeSpans": [["spans": spans.map { s in
-            ["traceId": "t", "spanId": s.id, "name": "span", "endTimeUnixNano": "1790000000000000000",
-             "attributes": s.attrs.map { otlpAttr($0.key, $0.value) }] as [String: Any]
+            var span: [String: Any] = ["traceId": "t", "spanId": s.id, "name": "span", "endTimeUnixNano": "1790000000000000000",
+                                       "attributes": s.attrs.map { otlpAttr($0.key, $0.value) }]
+            if let parent = parents[s.id] { span["parentSpanId"] = parent }
+            return span
         }]],
     ]]])
 }
@@ -268,27 +272,24 @@ struct CodexParseTests {
 
 @Suite("Unit: CopilotParser")
 struct CopilotParserTests {
-    @Test func readsChatTokensAndTopLevelAIUnitsOnly() {
+    @Test func readsChatSpansOnly() {
         let spans = CopilotParser.parseTraces(tracesBody([
             ("a", ["gen_ai.operation.name": "invoke_agent", "gen_ai.conversation.id": "c1",
-                   "server.address": "api.githubcopilot.com", "github.copilot.nano_aiu": 2_500_000_000]),
-            ("b", ["gen_ai.operation.name": "invoke_agent", "gen_ai.conversation.id": "c1",
-                   "github.copilot.nano_aiu": 1_000_000_000]),  // subagent: no server.address
+                   "server.address": "api.githubcopilot.com", "github.copilot.nano_aiu": 2_000_000_000]),
             ("c", ["gen_ai.operation.name": "chat", "gen_ai.conversation.id": "c1",
                    "gen_ai.request.model": "req-model", "gen_ai.response.model": "claude-sonnet-5",
                    "gen_ai.usage.input_tokens": 1200, "gen_ai.usage.output_tokens": 80,
                    "gen_ai.usage.cache_read.input_tokens": 900, "github.copilot.nano_aiu": 2_000_000_000]),
             ("d", ["gen_ai.operation.name": "execute_tool", "gen_ai.conversation.id": "c1"]),
             ("e", ["gen_ai.operation.name": "chat"]),  // no session id
-        ], resource: ["cc.label": "repo-x"]))
-        #expect(spans.count == 2)
-        guard case .topLevelAgent(let aiu) = spans[0].kind else { Issue.record("expected agent"); return }
-        #expect(aiu == 2_500_000_000)
+        ], resource: ["cc.label": "repo-x"], parents: ["c": "a", "d": "c"]))
+        #expect(spans.count == 1)
+        #expect(spans[0].spanId == "c")
+        #expect(spans[0].model == "claude-sonnet-5")
+        #expect(spans[0].tokens.total == 1280)
+        #expect(spans[0].tokens.cacheRead == 900)
+        #expect(spans[0].nanoAIU == 2_000_000_000)
         #expect(spans[0].label == "repo-x")
-        guard case .chat(let model, let t) = spans[1].kind else { Issue.record("expected chat"); return }
-        #expect(model == "claude-sonnet-5")
-        #expect(t.total == 1280)
-        #expect(t.cacheRead == 900)
     }
 
     @Test func rejectsGarbage() {

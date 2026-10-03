@@ -1,11 +1,6 @@
 import Foundation
 import SwiftUI
 
-struct DayUsage: Codable, Equatable {
-    var costUSD: Double = 0
-    var tokens: Double = 0
-}
-
 struct ClaudeModelUsage: Codable, Equatable {
     var tokens: Double = 0
     var costUSD: Double = 0
@@ -16,16 +11,12 @@ struct ClaudeSession: Codable, Identifiable, Equatable {
     var label: String?
     var localName: String?
     var cwd: String?
-    var terminalType: String?
     var isLocal = false
-    var models: [String] = []
     /// Keyed by token type: input, output, cacheRead, cacheCreation.
     var tokens: [String: Double] = [:]
     var costUSD: Double = 0
     /// Keyed by model ID. Optional so state saved by older builds still decodes.
     var byModel: [String: ClaudeModelUsage]?
-    /// Keyed by local calendar day, yyyy-MM-dd.
-    var daily: [String: DayUsage] = [:]
     var firstSeen: Date
     var lastSeen: Date
 
@@ -50,12 +41,18 @@ struct ClaudeSession: Codable, Identifiable, Equatable {
 }
 
 private struct PersistedState: Codable {
+    /// Absent in state saved by v0.0.1, whose series keys lack the session and resource attributes.
+    static let currentFormat = 2
+    var formatVersion: Int?
     var sessions: [String: ClaudeSession]
     var seriesLast: [String: Double]
     // Optional so state saved by older builds still decodes.
     var seriesLastTime: [String: Date]?
     var periods: [CollectionPeriod]?
     var recent: RecentKeys?
+    /// Cumulative readings from unversioned state, used once when that series is seen again.
+    var legacySeriesLast: [String: Double]?
+    var legacySeriesLastTime: [String: Date]?
 }
 
 @MainActor
@@ -67,6 +64,8 @@ final class ClaudeStore: ObservableObject {
     /// Last seen value and time of each cumulative series, to convert cumulative to delta.
     private var seriesLast: [String: Double] = [:]
     private var seriesLastTime: [String: Date] = [:]
+    private var legacySeriesLast: [String: Double] = [:]
+    private var legacySeriesLastTime: [String: Date] = [:]
     /// Periods when Claude Code was collected; usage outside them is not counted.
     private var periods: [CollectionPeriod] = []
     /// Recently counted delta points, so a re-sent export is not counted twice.
@@ -111,12 +110,25 @@ final class ClaudeStore: ObservableObject {
 
     func ingest(_ points: [UsagePoint]) {
         guard isRunning else { return }
-        let day = Format.dayKey(Date())
         recent.prune()
+        pruneLegacySeries()
         for p in points {
             let delta: Double
             if p.isCumulative {
-                let last = seriesLast[p.seriesKey], lastTime = seriesLastTime[p.seriesKey]
+                var last = seriesLast[p.seriesKey], lastTime = seriesLastTime[p.seriesKey]
+                // First reading since loading unversioned state: continue from its saved reading,
+                // stored under either the current key or the v0.0.1 key.
+                // It moves to the current key right away, so a stale reading that is skipped below
+                // cannot lose it.
+                if last == nil,
+                   let k = [p.seriesKey, p.legacySeriesKey].compactMap({ $0 }).first(where: { legacySeriesLast[$0] != nil }) {
+                    last = legacySeriesLast[k]
+                    lastTime = legacySeriesLastTime[k]
+                    seriesLast[p.seriesKey] = last
+                    seriesLastTime[p.seriesKey] = lastTime
+                    legacySeriesLast[k] = nil
+                    legacySeriesLastTime[k] = nil
+                }
                 if let last, let lastTime {
                     // A reading not newer than the last one is a late or re-sent export.
                     if p.time <= lastTime { continue }
@@ -136,8 +148,11 @@ final class ClaudeStore: ObservableObject {
                     delta = periods.covers(start: p.startTime, end: p.time) ? p.value : 0
                 }
             } else {
+                let at = "@" + String(p.time.timeIntervalSince1970)
+                // A re-sent point already counted under its v0.0.1 key is a duplicate too.
+                if let lk = p.legacySeriesKey, recent.contains(lk + at) { continue }
                 guard periods.covers(start: p.startTime, end: p.time),
-                      recent.insertIfNew(p.seriesKey + "@" + String(p.time.timeIntervalSince1970), time: p.time)
+                      recent.insertIfNew(p.seriesKey + at, time: p.time)
                 else { continue }
                 delta = p.value
             }
@@ -145,19 +160,15 @@ final class ClaudeStore: ObservableObject {
 
             var s = sessions[p.sessionId] ?? newSession(id: p.sessionId, at: p.time)
             if let label = p.label { s.label = label }
-            if let t = p.terminalType { s.terminalType = t }
-            if let m = p.model, !s.models.contains(m) { s.models.append(m) }
             s.lastSeen = max(s.lastSeen, Date())
             let model = p.model ?? "unknown"
             var byModel = s.byModel ?? [:]
             switch p.kind {
             case .tokens:
                 s.tokens[p.tokenType ?? "other", default: 0] += delta
-                s.daily[day, default: DayUsage()].tokens += delta
                 byModel[model, default: ClaudeModelUsage()].tokens += delta
             case .cost:
                 s.costUSD += delta
-                s.daily[day, default: DayUsage()].costUSD += delta
                 byModel[model, default: ClaudeModelUsage()].costUSD += delta
             }
             s.byModel = byModel
@@ -190,33 +201,14 @@ final class ClaudeStore: ObservableObject {
 
     // MARK: Queries
 
-    enum Range: String, CaseIterable, Identifiable {
-        case today, all
-        var id: String { rawValue }
-        var title: String { self == .today ? "Today" : "All time" }
-    }
+    var totalCost: Double { sessions.values.reduce(0) { $0 + $1.costUSD } }
+    var totalTokens: Double { sessions.values.reduce(0) { $0 + $1.totalTokens } }
 
-    func cost(_ s: ClaudeSession, in range: Range) -> Double {
-        range == .all ? s.costUSD : s.daily[Format.dayKey(now)]?.costUSD ?? 0
-    }
-
-    func tokens(_ s: ClaudeSession, in range: Range) -> Double {
-        range == .all ? s.totalTokens : s.daily[Format.dayKey(now)]?.tokens ?? 0
-    }
-
-    func totalCost(_ range: Range) -> Double { sessions.values.reduce(0) { $0 + cost($1, in: range) } }
-    func totalTokens(_ range: Range) -> Double { sessions.values.reduce(0) { $0 + tokens($1, in: range) } }
-
-    func sortedSessions(_ range: Range) -> [ClaudeSession] {
-        sessions.values
-            .filter { range == .all || tokens($0, in: range) > 0 || cost($0, in: range) > 0 }
-            .sorted { $0.lastSeen > $1.lastSeen }
-    }
+    /// Most recently active first.
+    var sortedSessions: [ClaudeSession] { sessions.values.sorted { $0.lastSeen > $1.lastSeen } }
 
     func isActive(_ s: ClaudeSession) -> Bool { now.timeIntervalSince(s.lastSeen) < Activity.window }
 
-    /// Clears the accumulated usage. Cumulative-series marks are kept so usage from before
-    /// the reset is not counted again.
     /// Clears the accumulated usage; counting restarts from now. Cumulative marks and recent
     /// keys are kept so data from before the reset is never counted.
     func reset() {
@@ -244,10 +236,28 @@ final class ClaudeStore: ObservableObject {
         guard let data = try? Data(contentsOf: fileURL),
               let state = try? JSONDecoder().decode(PersistedState.self, from: data) else { return }
         sessions = state.sessions
-        seriesLast = state.seriesLast
-        seriesLastTime = state.seriesLastTime ?? [:]
         periods = state.periods ?? []
         recent = state.recent ?? RecentKeys()
+        if state.formatVersion == nil {
+            // Saved before format versions: keys may be v0.0.1's or current. Readings are kept aside
+            // and matched by either key when each series is seen again.
+            legacySeriesLast = state.seriesLast
+            legacySeriesLastTime = state.seriesLastTime ?? [:]
+        } else {
+            seriesLast = state.seriesLast
+            seriesLastTime = state.seriesLastTime ?? [:]
+            legacySeriesLast = state.legacySeriesLast ?? [:]
+            legacySeriesLastTime = state.legacySeriesLastTime ?? [:]
+        }
+    }
+
+    /// A v0.0.1 reading not seen again within the de-duplication window is no longer useful.
+    private func pruneLegacySeries() {
+        let cutoff = Date().addingTimeInterval(-RecentKeys.window)
+        for (k, t) in legacySeriesLastTime where t < cutoff {
+            legacySeriesLast[k] = nil
+            legacySeriesLastTime[k] = nil
+        }
     }
 
     private func scheduleSave() {
@@ -261,8 +271,10 @@ final class ClaudeStore: ObservableObject {
 
     func saveNow() {
         guard loaded else { return }
-        let state = PersistedState(sessions: sessions, seriesLast: seriesLast, seriesLastTime: seriesLastTime,
-                                   periods: periods, recent: recent)
+        let state = PersistedState(formatVersion: PersistedState.currentFormat, sessions: sessions,
+                                   seriesLast: seriesLast, seriesLastTime: seriesLastTime, periods: periods,
+                                   recent: recent, legacySeriesLast: legacySeriesLast,
+                                   legacySeriesLastTime: legacySeriesLastTime)
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: fileURL, options: .atomic)
     }

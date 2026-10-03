@@ -77,7 +77,7 @@ struct UsagePanel: View {
     }
 
     private var claudeRows: [SessionRowItem] {
-        claude.sortedSessions(.all).map { s in
+        claude.sortedSessions.map { s in
             SessionRowItem(
                 id: "claude:" + s.id, name: s.displayName, cost: s.costUSD, isActive: claude.isActive(s),
                 help: "\(s.origin) · \(s.id)" + (s.cwd.map { "\n\($0)" } ?? ""),
@@ -124,7 +124,7 @@ struct UsagePanel: View {
     private var sessionContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             if model.claudeEnabled {
-                SectionHeader(title: "Claude Code", tokens: claude.totalTokens(.all), cost: claude.totalCost(.all))
+                SectionHeader(title: "Claude Code", tokens: claude.totalTokens, cost: claude.totalCost)
                 if claudeRows.isEmpty {
                     Text("No Claude Code usage since collection started. Telemetry must point at this app (see README).")
                         .font(.caption).foregroundStyle(.secondary)
@@ -179,7 +179,6 @@ struct UsagePanel: View {
                 TextField("4318", value: $model.port, format: .number.grouping(.never))
                     .frame(width: 70)
             }
-            Button("Copy local settings.json env block") { Self.copy(Snippets.localEnv(port: model.port)) }
             Toggle("Update OpenAI prices daily from developers.openai.com", isOn: $codex.autoUpdatePricing)
                 .disabled(!model.codexEnabled)
             HStack {
@@ -205,11 +204,6 @@ struct UsagePanel: View {
             Spacer()
             Button("Quit") { NSApp.terminate(nil) }
         }
-    }
-
-    private static func copy(_ s: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(s, forType: .string)
     }
 }
 
@@ -283,19 +277,5 @@ struct SessionRow: View {
                 .padding(.leading, Self.nameInset)
             }
         }
-    }
-}
-
-enum Snippets {
-    static func localEnv(port: Int) -> String {
-        """
-        "env": {
-          "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
-          "OTEL_METRICS_EXPORTER": "otlp",
-          "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL": "http/json",
-          "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://127.0.0.1:\(port)/v1/metrics",
-          "OTEL_METRIC_EXPORT_INTERVAL": "60000"
-        }
-        """
     }
 }

@@ -65,6 +65,16 @@ struct RecentKeys: Codable {
         return true
     }
 
+    func contains(_ key: String) -> Bool { seen[key] != nil }
+
+    /// Rewrites every key (for example to normalize saved keys); on a collision the later time wins.
+    mutating func mapKeys(_ transform: (String) -> String) {
+        seen = seen.reduce(into: [:]) { out, kv in
+            let k = transform(kv.key)
+            out[k] = max(out[k] ?? kv.value, kv.value)
+        }
+    }
+
     mutating func prune(now: Date = Date()) {
         let cutoff = now.addingTimeInterval(-Self.window)
         seen = seen.filter { $0.value >= cutoff }

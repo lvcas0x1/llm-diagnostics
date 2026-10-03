@@ -40,12 +40,12 @@ final class AppModel: ObservableObject {
     var anyEnabled: Bool { claudeEnabled || codexEnabled || copilotEnabled }
 
     var totalTokens: Double {
-        (claudeEnabled ? claude.totalTokens(.all) : 0) + (codexEnabled ? codex.totalTokens : 0)
+        (claudeEnabled ? claude.totalTokens : 0) + (codexEnabled ? codex.totalTokens : 0)
             + (copilotEnabled ? copilot.totalTokens : 0)
     }
 
     var totalCost: Double {
-        (claudeEnabled ? claude.totalCost(.all) : 0) + (codexEnabled ? codex.totalCost : 0)
+        (claudeEnabled ? claude.totalCost : 0) + (codexEnabled ? codex.totalCost : 0)
             + (copilotEnabled ? copilot.totalCost : 0)
     }
 
@@ -74,7 +74,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// The OTLP receiver runs while Claude Code or Copilot CLI is collected, and parses
+    /// The OTLP receiver runs while Claude Code or Copilot is collected, and parses
     /// only the payloads of the providers that are on.
     func restart() {
         if claudeEnabled || copilotEnabled {
