@@ -10,6 +10,8 @@ struct SessionRowItem: Identifiable {
     let help: String
     /// Model name and token count, largest first.
     let models: [(name: String, tokens: Double)]
+
+    var tokens: Double { models.reduce(0) { $0 + $1.tokens } }
 }
 
 struct UsagePanel: View {
@@ -129,7 +131,7 @@ struct UsagePanel: View {
                     Text("No Claude Code usage since collection started. Telemetry must point at this app (see README).")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                ForEach(claudeRows) { SessionRow(item: $0) }
+                SessionList(provider: "claude", rows: claudeRows)
             }
             if model.codexEnabled {
                 SectionHeader(title: "Codex", tokens: codex.totalTokens, cost: codex.totalCost)
@@ -138,7 +140,7 @@ struct UsagePanel: View {
                     Text("No Codex CLI usage since collection started.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                ForEach(codexRows) { SessionRow(item: $0) }
+                SessionList(provider: "codex", rows: codexRows)
                 if !codex.unpricedModels.isEmpty {
                     Text("No price for: \(codex.unpricedModels.joined(separator: ", ")) (not counted in cost)")
                         .font(.caption2).foregroundStyle(.orange)
@@ -151,7 +153,7 @@ struct UsagePanel: View {
                     Text("No Copilot CLI usage since collection started. Telemetry must point at this app (see README).")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                ForEach(copilotRows) { SessionRow(item: $0) }
+                SessionList(provider: "copilot", rows: copilotRows)
             }
             if !model.anyEnabled {
                 Text("Nothing is collected. Turn on a provider in Settings.")
@@ -217,6 +219,34 @@ private struct ContentHeightKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
+/// A provider's sessions: the most recent `collapsedCount` rows, and a row to show or hide the rest.
+struct SessionList: View {
+    static let collapsedCount = 3
+
+    @EnvironmentObject private var model: AppModel
+    let provider: String
+    let rows: [SessionRowItem]
+
+    private var showsAll: Bool { model.expandedProviders.contains(provider) }
+
+    var body: some View {
+        ForEach(showsAll ? rows : Array(rows.prefix(Self.collapsedCount))) { SessionRow(item: $0) }
+        if rows.count > Self.collapsedCount {
+            Button {
+                if showsAll { model.expandedProviders.remove(provider) } else { model.expandedProviders.insert(provider) }
+            } label: {
+                Text(showsAll ? "Show less" : "… \(rows.count - Self.collapsedCount) more")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding(.leading, SessionRow.nameInset)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focusEffectDisabled()
+        }
+    }
+}
+
 struct SectionHeader: View {
     let title: String
     let tokens: Double
@@ -240,7 +270,7 @@ struct SessionRow: View {
     private static let chevronWidth: CGFloat = 10
     private static let dotWidth: CGFloat = 7
     private static let spacing: CGFloat = 6
-    private static let nameInset = chevronWidth + dotWidth + spacing * 2
+    static let nameInset = chevronWidth + dotWidth + spacing * 2
 
     private var isExpanded: Bool { model.expandedSessions.contains(item.id) }
 
@@ -258,8 +288,13 @@ struct SessionRow: View {
                     Circle()
                         .fill(item.isActive ? Color.green : Color.secondary.opacity(0.4))
                         .frame(width: Self.dotWidth, height: Self.dotWidth)
-                    Text("\(item.name) - \(item.cost.map(Format.usd) ?? "$?")")
-                        .fontWeight(.medium).lineLimit(1).monospacedDigit()
+                    // A long name is cut with "…"; the totals after it always stay visible.
+                    HStack(spacing: 0) {
+                        Text(item.name).lineLimit(1).truncationMode(.tail)
+                        Text(" - \(Format.tokens(item.tokens)) / \(item.cost.map(Format.usd) ?? "$?")")
+                            .lineLimit(1).fixedSize()
+                    }
+                    .fontWeight(.medium).monospacedDigit()
                     Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())
@@ -267,12 +302,15 @@ struct SessionRow: View {
             .buttonStyle(.plain)
             // The panel focuses its first button on open; hide that focus ring on session rows.
             .focusEffectDisabled()
-            .help(item.help)
+            .help("\(item.name)\n\(item.help)")
 
             if isExpanded {
                 ForEach(item.models, id: \.name) { m in
-                    Text("└ \(m.name) - \(Format.tokens(m.tokens)) Token")
-                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    HStack(spacing: 0) {
+                        Text("└ \(m.name)").lineLimit(1).truncationMode(.tail)
+                        Text(" - \(Format.tokens(m.tokens)) Token").lineLimit(1).fixedSize()
+                    }
+                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 }
                 .padding(.leading, Self.nameInset)
             }

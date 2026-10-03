@@ -28,6 +28,8 @@ final class AppModel: ObservableObject {
 
     @Published var showSettings = false
     @Published var expandedSessions: Set<String> = []
+    /// Providers whose full session list is shown; the others show their most recent sessions.
+    @Published var expandedProviders: Set<String> = []
     /// Measured height of the session list content, used to size its scroll view.
     @Published var sessionListHeight: CGFloat = 0
     /// Measured height of the whole panel, used to size its window.

@@ -9,8 +9,12 @@ API cost per session for Claude Code, the Codex CLI, and GitHub Copilot (CLI and
 - Menu bar: `<tokens> / $<cost>` (tokens with a unit, e.g. `80.9M / $29.25`; the panel uses the same format), the total of all enabled providers since collection started
   (or since the provider's last reset).
 - Panel: the same total, then one section per enabled provider in the order Claude Code, Codex,
-  GitHub Copilot CLI. Each section shows its subtotal and its sessions, most recent first.
-  A session row is `name - $cost`; clicking it expands one line per model with its token count.
+  GitHub Copilot CLI. Each section shows its subtotal and its 3 most recent sessions; `… N more`
+  shows the rest and `Show less` hides them again. The panel fits its content; the session list
+  scrolls only when expanded sections exceed 420pt.
+  A session row is `name - <tokens> / $<cost>`; clicking it expands one line per model with its
+  token count. A name too long for the panel's width is cut with `…` (the totals stay visible; the
+  tooltip shows the full name).
   A green dot marks a session with usage in the last 3 minutes.
 - Costs are estimates, not bills. See each provider below.
 
