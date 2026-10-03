@@ -1,0 +1,15 @@
+# Swift Package Manager build output
+.build/
+.swiftpm/
+
+# App bundles, UI test screenshots, and helpers built by scripts/
+build/
+
+# Xcode, if the package is opened in Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store
